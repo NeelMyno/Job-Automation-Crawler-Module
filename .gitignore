@@ -1,0 +1,7 @@
+# OS / tooling noise
+.DS_Store
+__pycache__/
+*.pyc
+
+# Crawler output — regenerated each run, not something to version
+pipeline/job-feed.md
