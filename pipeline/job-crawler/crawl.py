@@ -5,8 +5,8 @@ Job crawler.
 Pulls REAL postings straight from companies' public ATS boards (Greenhouse / Lever / Ashby)
 AND the monthly Hacker News "Ask HN: Who is hiring?" thread, filters to your own target roles
 (configured in filters.yaml), DROPS hard blockers you define (e.g. citizenship/clearance/ITAR
-walls, if any apply to you), FLAGS soft "won't sponsor" postings (kept, not dropped, by default
-— edit filters.yaml if this doesn't apply to your situation), and returns the fresh matches. $0,
+walls, if any apply to you), FLAGS soft "won't sponsor" postings (kept, not dropped, by default;
+edit filters.yaml if this doesn't apply to your situation), and returns the fresh matches. $0,
 no API keys, no login, no scraping of any login-walled platform (no account-ban risk). The whole
 point is to catch a posting the day it goes up, before it's buried under a week of new listings.
 
@@ -18,7 +18,7 @@ Sources: the public ATS JSON, plus HN "Who's Hiring" via the free Algolia API (s
 Prints:  JSON of fresh matches to stdout.
 --write also: rewrites ../job-feed.md (the review feed) and, IF ../tracker.html exists with an
               `APPLICATIONS = [` array, appends new deduped `lead` rows to it (safely, with
-              validation) — this repo doesn't ship one, so that half quietly no-ops; see
+              validation). This repo doesn't ship one, so that half quietly no-ops; see
               pipeline/job-crawler/README.md if you want to add your own for cross-run dedup.
 
 Usage:
@@ -83,7 +83,7 @@ def from_greenhouse(company, slug):
                         location=(loc.get("name") if isinstance(loc, dict) else str(loc)) or "",
                         url=j.get("absolute_url", ""),
                         # first_published is the TRUE publish time. updated_at bumps on ANY edit, so
-                        # an old job edited today would read as fresh — prefer first_published.
+                        # an old job edited today would read as fresh; prefer first_published.
                         posted_at=parse_ts(j.get("first_published") or j.get("updated_at")),
                         remote=None, description=strip_html(j.get("content", ""))))
     return out
@@ -134,11 +134,11 @@ def blocked(job, F):
 
 
 def sponsorship_flagged(job, F):
-    """SOFT sponsorship signal — does the posting SAY it will not sponsor a visa? Scans the SAME
+    """SOFT sponsorship signal: does the posting SAY it will not sponsor a visa? Scans the SAME
     text blocked() does (title + description). Unlike blocked(), a hit here NEVER drops the
     posting on its own: whether that matters to you depends on your own work-authorization
-    situation — that's your call, this script has no opinion on it. The hard walls — anything you've put
-    in exclude_patterns — live in blocked(), and a posting that trips BOTH is dropped by blocked()
+    situation; that's your call, this script has no opinion on it. The hard walls (anything you've put
+    in exclude_patterns) live in blocked(), and a posting that trips BOTH is dropped by blocked()
     first (a wall always wins). Leave filters.yaml's flag_patterns empty to disable this feature
     entirely. Returns bool."""
     dl = (job["title"] + " " + job["description"]).lower()
@@ -160,8 +160,8 @@ def _block_re(terms):
 def location_ok(job, F):
     """US-only gate: drop a posting only if its location names a clearly non-US place AND names
     no US marker. Remote/unknown locations are kept. The block list matches on WORD BOUNDARIES
-    (see _block_re), so a genuine US location whose name merely CONTAINS a blocked substring —
-    'Indianapolis, IN' / 'Indiana' (india), 'Albuquerque, New Mexico' (mexico) — is not silently
+    (see _block_re), so a genuine US location whose name merely CONTAINS a blocked substring,
+    such as 'Indianapolis, IN' / 'Indiana' (india) or 'Albuquerque, New Mexico' (mexico), is not silently
     dropped; its us_markers entry ('new mexico' / ', nm') asserts its US-ness instead."""
     if not F.get("require_us"):
         return True
@@ -177,15 +177,15 @@ def location_ok(job, F):
 
 def score(job, F):
     """Score = count of include_keywords hits. Add your own bonus terms straight into
-    filters.yaml's include_keywords rather than hardcoding a title bonus here — that keeps every
+    filters.yaml's include_keywords rather than hardcoding a title bonus here; that keeps every
     scoring rule in one user-editable place instead of split between config and code."""
     dl = (job["title"] + " " + job["description"]).lower()
     return sum(1 for k in F.get("include_keywords", []) if k in dl)
 
 
 def consider(j, F, args, cutoff, stats):
-    """Run one normalized posting (from ANY source) through the shared gates — title match,
-    reject patterns, US-location, freshness — and return a match dict (carrying provenance
+    """Run one normalized posting (from ANY source) through the shared gates (title match,
+    reject patterns, US-location, freshness) and return a match dict (carrying provenance
     `source`) or None. Used identically for ATS boards and HN so both obey the same filters.yaml.
     Increments stats['title_hits'] on a title-match hit (across all sources)."""
     m = title_match(j, F)
@@ -221,7 +221,7 @@ def write_feed(matches, hours):
     nflag = sum(1 for m in matches if m.get("no_sponsor_flag"))
     meta = (f"_Generated {now} · last {hours}h · {len(matches)} match(es)"
             + (f" · {nflag} ⚠ no-sponsor" if nflag else "") + " · via `pipeline/job-crawler/crawl.py`._")
-    L = ["# Job feed — fresh roles, from company ATS boards + HN Who's Hiring", "",
+    L = ["# Job feed: fresh roles, from company ATS boards + HN Who's Hiring", "",
          meta, "",
          "Real postings only, pulled straight from the source. Sources: your target companies' "
          "public ATS boards, plus the monthly Hacker News \"Who is hiring?\" thread (shown in the "
@@ -230,7 +230,7 @@ def write_feed(matches, hours):
          "applying.", ""]
     if nflag:
         L += ["**⚠ no-sponsor flag (Flag column):** the posting says it will not sponsor a visa. "
-              "It is KEPT here, not dropped, by default — whether that matters depends on your own "
+              "It is KEPT here, not dropped, by default; whether that matters depends on your own "
               "work-authorization situation, which is yours to judge. Edit "
               "`filters.yaml`'s `flag_patterns` if you'd rather these were dropped outright, or run "
               "with `--hide-no-sponsor`.", ""]
@@ -243,7 +243,7 @@ def write_feed(matches, hours):
                  f"{_md_esc(m['location']) or '—'} | {(m['posted_at'] or '')[:10]} | {src} | {flag} | "
                  f"[open]({m['url']}) |")
     if not matches:
-        L.append("| — | — | _No fresh matches this run — widen with `--hours` or add boards._ "
+        L.append("| — | — | _No fresh matches this run: widen with `--hours` or add boards._ "
                  "| — | — | — | — | — |")
     FEED.write_text("\n".join(L) + "\n")
     return str(FEED)
@@ -258,7 +258,7 @@ def _js_row(m):
     spon = "no" if flagged else "ask"
     src_label = "HN Who's Hiring" if m.get("source") == "hn" else "the crawler"
 
-    # A table cell holds a FACT, never a paragraph — `next` is a short, verb-first imperative.
+    # A table cell holds a FACT, never a paragraph: `next` is a short, verb-first imperative.
     # Everything else goes in `notes`, revealed only when a row expands.
     if flagged:
         nxt = "Apply anyway if your own work-authorization answer supports it. Check the form."
@@ -272,7 +272,7 @@ def _js_row(m):
              + " Read the full JD before tailoring, never a summary.")
     if flagged:
         notes = ("This posting states it will not sponsor. Whether that rules it out depends on"
-                 " your own work-authorization situation — that's yours to judge, and worth"
+                 " your own work-authorization situation; that's yours to judge, and worth"
                  " answering deliberately on the form rather than by assumption. " + notes)
     if m.get("source") == "hn":
         notes = ("Freeform HN post, so the company, role, and location are unverified. Check them on"
@@ -299,7 +299,7 @@ def patch_tracker(matches):
     marker = "const APPLICATIONS = ["
     i = src.find(marker)
     if i < 0:
-        return {"error": "APPLICATIONS array marker not found — NOT patched", "added": 0}
+        return {"error": "APPLICATIONS array marker not found; nothing was patched", "added": 0}
     existing = set(re.findall(r'link:"([^"]+)"', src))
     new = [m for m in matches if m["url"] and m["url"] not in existing]
     if not new:
@@ -315,7 +315,7 @@ def patch_tracker(matches):
             and patched.count('co:"') == src.count('co:"') + len(new)):
         TRACKER.write_text(patched)
         return {"added": len(new), "companies": sorted({m["company"] for m in new})}
-    return {"error": "post-patch validation failed — tracker NOT written", "added": 0}
+    return {"error": "post-patch validation failed; tracker not written", "added": 0}
 
 
 def main():
