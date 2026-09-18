@@ -1,7 +1,8 @@
 # Job Crawler
 
 A free, real-time job crawler: it pulls fresh postings straight from your target companies' public
-ATS boards (Greenhouse / Lever / Ashby) and the monthly Hacker News "Who is hiring?" thread,
+ATS boards (Greenhouse / Lever / Ashby / SmartRecruiters / Workable / Workday) and the monthly
+Hacker News "Who is hiring?" thread,
 filtered to your own role and location. No résumé/cover-letter generation, no application tracker,
 no outreach. **Just job discovery.** You fill out and submit applications yourself; this just
 finds them for you, fast, before they're buried under a week of new listings.

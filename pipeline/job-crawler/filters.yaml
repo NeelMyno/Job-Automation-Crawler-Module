@@ -37,17 +37,25 @@ include_keywords:
 #   - if you DO hold a clearance or are eligible, you'd not only skip that exclusion, you
 #     might instead ADD those same terms to include_keywords so cleared roles rank higher
 # Work-authorization-specific walls (citizenship-only, green-card-only, no-sponsorship-ever)
-# belong here too, IF they're genuinely a hard wall for you. See
-# knowledge-base/02-work-authorization.md before deciding. They are NOT prefilled, because
+# belong here too, IF they're genuinely a hard wall for you. That's your own call, not
+# something this crawler-only build has an opinion on. They are NOT prefilled, because
 # assuming everyone needs this filter (or that nobody does) would be wrong for someone.
+#
+# Worth a look once you add boards.yaml entries on the broader ATS platforms (Workday,
+# SmartRecruiters, Workable): a bigger, more generic ATS surfaces a wider mix of postings than
+# Greenhouse/Lever/Ashby's security/eng-heavy user base, so a title substring you'd expect to be
+# unambiguous in your own field can collide with an unrelated one elsewhere in a company's full
+# board. If you start seeing off-target matches after adding one of those boards, this is the
+# list to tighten.
 exclude_patterns: []
 
 # SOFT FLAG gate: the posting says something you want surfaced with a caveat, not hidden.
 # The canonical use case is a "no visa sponsorship" line when your own situation means that
 # claim doesn't actually rule you out (e.g. you're already authorized to work without
-# needing anything from the employer). See knowledge-base/02-work-authorization.md and
-# knowledge-base/12-application-answers.md §3 before relying on this. Leave empty to disable
-# the feature entirely; crawl.py's sponsorship_flagged() simply never matches anything.
+# needing anything from the employer). This is your own call to make about your own work
+# authorization; this crawler-only build has no knowledge base to check it against. Leave
+# empty to disable the feature entirely; crawl.py's sponsorship_flagged() simply never
+# matches anything.
 # Worked example (commented out):
 #   - no sponsorship
 #   - not eligible for sponsorship
