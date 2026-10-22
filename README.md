@@ -17,8 +17,17 @@ No résumé/cover-letter generation, no application tracker, no outreach. **Just
 fill out and submit applications yourself; this finds them for you, fast, before they're buried.
 
 **$0. No login. No scraping of any login-walled platform.** It reads public JSON that companies and
-job sites publish. The only key anywhere is the optional free USAJOBS key, read from your
-environment, never from a file.
+job sites publish. Keys are optional and free (USAJOBS for federal jobs, The Muse if you switch it
+on), read from your environment, never from a file.
+
+**Where you can work.** `filters.yaml` also holds your location rules: `require_us` (drop postings
+outside the US), `remote_ok`, `onsite_ok` and `home_metros` (for example remote, or on site only
+near Denver). The crawl report says how many postings each rule removed.
+
+**When it finds little.** The free job APIs lean remote and tech, and many employers (hospitals,
+schools, government, retailers) use hiring systems this crawler can't read. A crawl with few matches
+prints a plain hint, and `discover.py --queries` prints ready-made web searches for your titles and
+places, so you can find those postings and apply on the employer's own site.
 
 ## Quick start
 
@@ -46,8 +55,13 @@ and why, so you can always see exactly what was covered.
 - `pipeline/job-crawler/sources.py` + `sources.yaml`: the free job APIs and their on/off switches,
   with each source's terms and limits summarized.
 - `pipeline/job-crawler/hn.py`: the Hacker News "Who's Hiring" collector.
-- `pipeline/job-crawler/liveness.py` + `test_liveness.py`: an optional ghost-job re-checker.
-  Re-verify a posting is still live before you spend time on it.
+- `pipeline/job-crawler/locations.py` and `titles.py`: the location and title rules that `crawl.py`
+  and `discover.py` share, so both agree on what counts as a match.
+- `pipeline/job-crawler/http_util.py`: polite downloading (retries, a time budget, a curl fallback).
+- `pipeline/job-crawler/liveness.py`: an optional ghost-job re-checker. Re-verify a posting is still
+  live before you spend time on it.
+- `pipeline/job-crawler/test_*.py`: offline tests (`test_crawl`, `test_discover`, `test_http_util`,
+  `test_liveness`, `test_sources`); run them after any change, as `SETUP.md` shows.
 - `pipeline/job-crawler/boards.yaml`: company boards. Starts empty; `discover.py` fills it, and you
   can add rows by hand.
 - `pipeline/job-crawler/filters.yaml`: your role titles, keywords, and location rules. **Edit this:
