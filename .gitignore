@@ -3,5 +3,7 @@
 __pycache__/
 *.pyc
 
-# Crawler output — regenerated each run, not something to version
+# Crawler output: regenerated each run, not something to version
 pipeline/job-feed.md
+# Crawler local state (source fetch times, discovery index and progress)
+pipeline/job-crawler/cache/

@@ -8,16 +8,21 @@
 lookback_hours: 72
 
 # TITLE gate: keep only if the job title contains one of these (case-insensitive substring).
-# THIS IS THE FIELD THAT ACTUALLY TARGETS THE CRAWLER: put your own role titles here.
-# Example shape (delete these and write your own):
-include_titles:
-  - example title one          # e.g. "security engineer"
-  - example title two          # e.g. "application security"
+# THIS IS THE FIELD THAT ACTUALLY TARGETS THE CRAWLER: put your own role titles here, for any
+# role in any industry. It ships empty, and crawl.py refuses to run until it has at least one
+# title (an empty list would match nothing). discover.py uses the same titles to decide which
+# company boards to add. Example shape:
+#   include_titles:
+#     - data analyst
+#     - registered nurse
+#     - mechanical engineer
+include_titles: []
 
 # SIGNAL boosters (optional): presence in the title/description bumps a match's score;
-# not required for a match, purely a ranking aid.
-include_keywords:
-  - example keyword            # e.g. "soc2", "red team", "incident response"
+# not required for a match, purely a ranking aid. Matches are ranked by this score, then by
+# title fit (exactly one of your titles, then whole words, then part of a word), then newest.
+# Left empty, the score is 0 for every match and plays no part (crawl.py's JSON says so).
+include_keywords: []           # e.g. ["sql", "python"] or ["autocad", "solidworks"]
 
 # ============================================================================
 # REJECT vs FLAG are two DIFFERENT gates. Keep them separate rather than merging one into
@@ -32,10 +37,10 @@ include_keywords:
 # family you don't do, or a hard legal requirement you can't meet).
 #
 # Two worked examples, commented out, showing opposite real situations:
-#   - if you do NOT hold a security clearance and can't get one quickly, you might exclude
-#     "security clearance", "top secret", "ts/sci", "polygraph", "dod clearance"
-#   - if you DO hold a clearance or are eligible, you'd not only skip that exclusion, you
-#     might instead ADD those same terms to include_keywords so cleared roles rank higher
+#   - if you do NOT hold a license a posting demands and can't get one quickly, you might
+#     exclude it, e.g. "cpa required", "rn license required", "pe license required"
+#   - if you DO hold that license, you'd not only skip that exclusion, you might instead ADD
+#     the same terms to include_keywords so those postings rank higher
 # Work-authorization-specific walls (citizenship-only, green-card-only, no-sponsorship-ever)
 # belong here too, IF they're genuinely a hard wall for you. That's your own call, not
 # something this crawler-only build has an opinion on. They are NOT prefilled, because
@@ -43,7 +48,7 @@ include_keywords:
 #
 # Worth a look once you add boards.yaml entries on the broader ATS platforms (Workday,
 # SmartRecruiters, Workable): a bigger, more generic ATS surfaces a wider mix of postings than
-# Greenhouse/Lever/Ashby's security/eng-heavy user base, so a title substring you'd expect to be
+# Greenhouse/Lever/Ashby's tech-company-heavy user base, so a title substring you'd expect to be
 # unambiguous in your own field can collide with an unrelated one elsewhere in a company's full
 # board. If you start seeing off-target matches after adding one of those boards, this is the
 # list to tighten.
@@ -75,6 +80,25 @@ exclude_companies: []
 # US-geography data, not tied to any specific role, so they're left filled in as a starting
 # point. Trim or extend them for your own target region.
 require_us: true
+
+# WORK-MODE gate: where you can actually work. The same rule decides which company boards
+# discover.py adds, so a board is never added for jobs you would then filter out.
+#   remote_ok: true | false              keep remote postings?
+#   onsite_ok: anywhere | home_metros | none
+#                                        onsite and hybrid postings: keep them anywhere (the
+#                                        default), only in a place under home_metros, or never
+#   home_metros: place names matched as whole words in the posting's location text
+# "Remote, or onsite in Denver, no relocation" is:
+#   remote_ok: true
+#   onsite_ok: home_metros
+#   home_metros: ["denver", "boulder"]
+# "Remote only" is remote_ok: true with onsite_ok: none. A posting whose location says nothing
+# readable is kept: the gate never guesses. Check the result with `python3 locations.py --selftest`
+# and a crawl's JSON `location_rule` line.
+remote_ok: true
+onsite_ok: anywhere
+home_metros: []
+
 us_markers:
   - united states
   - usa

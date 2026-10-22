@@ -4,8 +4,8 @@ Liveness / ghost-job re-checker.
 
 Before you spend effort on a lead, RE-VERIFY the posting is still actually live. A meaningful
 fraction of job postings are ghosts or already filled, so a lead that looked good last week may
-be dead today. This module re-checks a single URL, or every open `lead` in the tracker, and
-returns one of three verdicts: `live` | `dead` | `uncertain`.
+be dead today. This module re-checks a posting URL and returns one of three
+verdicts: `live` | `dead` | `uncertain`.
 
 CONSERVATIVE BY DESIGN. A false "dead" makes you skip a real job, which is the expensive mistake,
 so the bar for "dead" is strong evidence only; everything short of that is `uncertain`. "live"
@@ -26,17 +26,14 @@ Two check strategies, picked automatically:
     re-query the public board API and test whether the posting's own job id is still present.
     Present -> live; absent -> dead. This is the same JSON the company publishes for its careers
     page, so it is ground truth for "is this posting still open".
-  * Everything else (company careers pages, aggregators, HN links) -> a plain HTTP GET that
-    follows redirects, then a conservative text classifier (`classify`).
+  * Everything else (SmartRecruiters, Workable and Workday postings, company careers pages,
+    aggregators, HN links) -> a plain HTTP GET that follows redirects, then a conservative text
+    classifier (`classify`).
 
 Usage:
   python3 liveness.py --url <URL>                 # check one posting -> verdict + reason
   python3 liveness.py --url <URL> --company Acme   # help resolve a company-hosted ATS slug
-  python3 liveness.py --tracker                   # re-check every `lead` row, print a report
-  python3 liveness.py --tracker --write           # + annotate each checked row (liveness/checked)
-  python3 liveness.py --tracker --company acme     # only leads whose company matches
-  python3 liveness.py --tracker --sleep 0.5 --timeout 15   # tune politeness / timeouts
-  python3 liveness.py --tracker --today 2026-07-14         # override the check date (sandbox clock)
+  python3 liveness.py --url <URL> --timeout 15     # tune the request timeout
 """
 import json, sys, argparse, re, html, time, socket, datetime
 import urllib.request, urllib.error
@@ -211,7 +208,7 @@ def classify(status_code, final_url, body_text, *, original_url):
 # ============================================================================================
 def detect_ats(url):
     """Greenhouse / Ashby / Lever from the URL, or None. A company-hosted page carrying `gh_jid=`
-    is Greenhouse even though its host is the company's own domain (e.g. stripe.com, brex.com)."""
+    is Greenhouse even though its host is the company's own domain (e.g. acme.example.com, globex.example.com)."""
     h = _host(url)
     u = url or ""
     if "ashbyhq.com" in h:
@@ -237,7 +234,7 @@ def job_id_from_url(url, ats):
 
 def slug_from_url(url, ats):
     """The board slug from the URL path, when present. Company-hosted Greenhouse pages
-    (stripe.com/...?gh_jid=) do NOT carry the slug; that is resolved from the company via
+    (acme.example.com/...?gh_jid=) do NOT carry the slug; that is resolved from the company via
     boards.yaml instead (see resolve_target)."""
     p = urlparse(url or "")
     h = _host(url)
@@ -403,7 +400,7 @@ def check_url(url, company=None, boards_map=None, cache=None, timeout=20):
 # ============================================================================================
 def load_boards_map():
     """{company_lower|slug_lower: (ats, slug)} from boards.yaml, so company-hosted Greenhouse rows
-    (stripe.com/...?gh_jid=) resolve to a board slug. PyYAML is the crawler's one existing dep;
+    (acme.example.com/...?gh_jid=) resolve to a board slug. PyYAML is the crawler's one existing dep;
     if it is unavailable we simply skip the map (those rows fall back to an HTTP check)."""
     out = {}
     try:
@@ -604,11 +601,15 @@ def run_url(args):
 
 def main():
     ap = argparse.ArgumentParser(description="Re-verify that job leads are still live (ghost-job check).")
+    has_tracker = TRACKER.exists()  # the --tracker mode is shown only when pipeline/tracker.html exists
     ap.add_argument("--url", help="check a single posting URL")
-    ap.add_argument("--tracker", action="store_true", help="re-check every `lead` row in tracker.html")
+    ap.add_argument("--tracker", action="store_true",
+                    help="re-check every `lead` row in tracker.html" if has_tracker else argparse.SUPPRESS)
     ap.add_argument("--write", action="store_true",
-                    help="with --tracker: stamp liveness/checked onto each checked row (validated)")
-    ap.add_argument("--company", help="filter tracker leads by company; or resolve an ATS slug for --url")
+                    help=("with --tracker: stamp liveness/checked onto each checked row (validated)"
+                          if has_tracker else argparse.SUPPRESS))
+    ap.add_argument("--company", help=("filter tracker leads by company; or resolve an ATS slug for --url"
+                                       if has_tracker else "resolve a company-hosted ATS slug for --url"))
     ap.add_argument("--today", help="check date YYYY-MM-DD (override if the clock is unavailable)")
     ap.add_argument("--sleep", type=float, default=1.0, help="seconds between requests (politeness)")
     ap.add_argument("--timeout", type=int, default=20, help="per-request timeout in seconds")
