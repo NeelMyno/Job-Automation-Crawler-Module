@@ -1,9 +1,28 @@
 # SETUP
 
+## 0. Before you start
+
+You don't need to be a developer. You need three things:
+
+1. **The repo on your computer.** On the GitHub page, click the green **Code** button, then
+   **Download ZIP**, and unzip it. Or, if you use git, copy the URL from that same button and
+   run `git clone <that URL>`.
+2. **A terminal, opened in the repo's folder.**
+   - Mac: open **Terminal** (press Cmd+Space, type "Terminal"). Type `cd ` (with a space), drag the
+     unzipped folder onto the window, and press Return.
+   - Windows: open the unzipped folder in File Explorer, click the address bar, type `cmd`, and
+     press Enter.
+   Every command below runs from this folder (the one that holds `SETUP.md`).
+3. **Python 3.** Check with `python3 --version` (Windows: `py --version`). If it says "not found",
+   install it from https://www.python.org/downloads/ (on Windows, tick "Add python.exe to PATH" in
+   the installer), then close and reopen the terminal.
+
+On Windows, type `py` wherever this guide says `python3`.
+
 ## 1. Install
 
 ```
-pip install -r pipeline/job-crawler/requirements.txt
+python3 -m pip install -r pipeline/job-crawler/requirements.txt
 ```
 That's the one dependency (PyYAML). No accounts and no login for anything in this repo. The only
 optional key is a free USAJOBS key (step 4).
@@ -13,7 +32,8 @@ optional key is a free USAJOBS key (step 4).
 Put your own role titles under `include_titles`, for any role in any industry. This is the field
 that targets the whole crawler, and board discovery uses it too. It ships empty, and `crawl.py`
 won't run until it has at least one title. Matching is a case-insensitive substring of the job
-title, so a short, common phrasing catches more. Examples:
+title, so a short, common phrasing catches more. A title of 3 characters or fewer ("rn", "cna")
+must match as a whole word, so "rn" does not match "International". Examples:
 ```yaml
 include_titles:
   - data analyst
@@ -88,26 +108,42 @@ python3 pipeline/job-crawler/crawl.py --hours 168 --write
 If you get zero matches: widen `--hours`, check your `include_titles` match how employers phrase the
 role, and run another `discover.py --sweep`.
 
+A small count often just means your jobs are somewhere this crawler can't read. The free feeds are
+mostly remote and tech jobs, and many employers (hospitals, schools, government, retailers) use
+hiring systems it can't read. The crawl says so in its `hints` when it finds little. Then:
+```
+python3 pipeline/job-crawler/discover.py --queries
+```
+prints ready-made web searches, including plain ones like "registered nurse jobs columbus" built
+from your `home_metros`. Run them, open the postings you find, and apply there. Feed any result
+URLs to `discover.py --urls -` too: those on a supported ATS become boards the crawler reads next
+time.
+
 ## 6. Before you apply to a lead, re-check it's still live
 
 ```
 python3 pipeline/job-crawler/liveness.py --url <the posting URL>
 ```
-Roughly one in five to seven postings are already dead by the time someone gets to them. This is a
-quick, free, conservative check: it only ever says "dead" on strong evidence.
+Some postings are already closed by the time you get to them. This is a quick, free, conservative
+check: it only ever says "dead" on strong evidence.
 
 ## Verify everything works
 
 ```
 cd pipeline/job-crawler
-python3 test_liveness.py && python3 test_sources.py && python3 test_discover.py
+for t in test_*.py; do python3 "$t" || echo "FAILED: $t"; done
+python3 discover.py --selftest && python3 sources.py --selftest
+python3 titles.py --selftest && python3 locations.py --selftest
 ```
-Each should print `OK`. They are fully offline, with no network calls and no dependency on your own
+Each should end with `OK`. (The `for` line is for a Mac or Linux terminal; on Windows, run each
+`test_*.py` file with `py`.) They are fully offline, with no network calls and no dependency on your own
 config being filled in yet.
 
 ## Troubleshooting
 
-- **`ModuleNotFoundError: No module named 'yaml'`** → `pip install PyYAML`.
+- **`ModuleNotFoundError: No module named 'yaml'`** → `python3 -m pip install PyYAML`.
+- **`pip: command not found`** → use `python3 -m pip ...` as in step 1 (Windows: `py -m pip ...`).
+- **`python3: command not found`** → step 0, point 3.
 - **"No job titles set"** → step 2.
 - **0 matches** → see step 5.
 - **A board's `errors` entry says "HTTP 404"** → that board's slug is wrong or the company moved

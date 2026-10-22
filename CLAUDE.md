@@ -64,7 +64,8 @@ every source, whether it ran, how many jobs it returned, and why any was skipped
 
 ```
 cd pipeline/job-crawler
-python3 test_liveness.py && python3 test_sources.py && python3 test_discover.py   # offline, should print OK
+for t in test_*.py; do python3 "$t" || echo "FAILED: $t"; done                   # offline, each ends OK
 python3 discover.py --selftest && python3 sources.py --selftest                     # offline
+python3 titles.py --selftest && python3 locations.py --selftest                     # offline
 python3 crawl.py --hours 720        # real live postings as JSON, with the `sources` report
 ```

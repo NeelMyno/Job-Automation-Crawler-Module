@@ -40,7 +40,7 @@ import json, sys, argparse, re, html, urllib.request, urllib.error
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from http_util import read_url  # sibling module: gzip + retry on a cut-off read
+from http_util import read_url, UA  # sibling module: gzip, retry, the shared User-Agent
 import hn  # sibling module: the HN "Who's Hiring" collector (same dir, on sys.path)
 import sources as api_sources  # sibling module: the free job APIs configured in sources.yaml
 import locations  # sibling module: the location rule crawl.py and discover.py share
@@ -49,8 +49,6 @@ from locations import _block_re, location_ok  # noqa: F401  (kept importable fro
 
 HERE = Path(__file__).resolve().parent
 FEED = HERE.parent / "job-feed.md"        # pipeline/job-feed.md
-TRACKER = HERE.parent / "tracker.html"    # pipeline/tracker.html
-UA = "Mozilla/5.0 (personal job-search crawler; see pipeline/job-crawler/README.md)"
 CACHE_DIR = HERE / "cache"                # gitignored: source fetch times + discovery state
 NO_TITLES = ("No job titles set: add your role titles under include_titles in "
              "pipeline/job-crawler/filters.yaml, then run the crawler again.")
@@ -109,7 +107,7 @@ def from_greenhouse(company, slug):
                         location=(loc.get("name") if isinstance(loc, dict) else str(loc)) or "",
                         url=j.get("absolute_url", ""),
                         # first_published is the TRUE publish time. updated_at bumps on ANY edit, so
-                        # an old job edited today would read as fresh; prefer first_published.
+                        # an old job edited today would read as fresh. Prefer first_published.
                         posted_at=parse_ts(j.get("first_published") or j.get("updated_at")),
                         remote=None, description=strip_html(j.get("content", ""))))
     return out
@@ -254,6 +252,45 @@ FETCHERS = {"greenhouse": from_greenhouse, "ashby": from_ashby, "lever": from_le
             "workday": from_workday, "smartrecruiters": from_smartrecruiters, "workable": from_workable}
 
 
+FEW_MATCHES = 3  # a run with this many matches or fewer gets the "look beyond the feeds" hint
+FEW_MATCHES_HINT = (
+    "{n} match(es) this run. The default free feeds are mostly remote and tech jobs, and many "
+    "employers (hospitals, schools, government, retailers and more) use hiring systems this crawler "
+    "can't read, so a small count does not mean there are few jobs for you. Search the web for "
+    "\"{title} jobs{place}\" and for employers' own career pages (`python3 "
+    "pipeline/job-crawler/discover.py --queries` prints ready-made searches), then {route}")
+ROUTE_DIRECT = "open each posting you find and apply there."
+LIST_KEYS = ("include_keywords", "exclude_patterns", "flag_patterns", "exclude_companies")
+
+
+def normalize_filters(F):
+    """filters.yaml as crawl.py compares it: titles and every word list lowercased (job text is
+    lowercased before matching, so "US Citizen" or "Acme" would otherwise never match), and an
+    empty or null list read as no list. A blank entry is dropped: it would match every posting."""
+    F = dict(F or {})
+    F["include_titles"] = [str(t).strip().lower() for t in (F.get("include_titles") or [])
+                           if t is not None and str(t).strip()]
+    for k in LIST_KEYS:
+        v = F.get(k) or []
+        if isinstance(v, str):
+            v = [v]
+        F[k] = [str(x).lower() for x in v if x is not None and str(x).strip()]
+    return F
+
+
+def few_matches_hint(n, F):
+    """The plain hint for a run that found little; None when it found enough."""
+    if n > FEW_MATCHES:
+        return None
+    try:
+        _, onsite, metros = locations.settings(F)
+    except ValueError:
+        onsite, metros = "anywhere", ()
+    place = f" {metros[0]}" if metros else ""
+    return FEW_MATCHES_HINT.format(n=n, title=F["include_titles"][0], place=place,
+                                   route=ROUTE_DIRECT)
+
+
 def title_match(job, F):
     """The include_titles term this job's title matches, or None (titles.py: a substring, except a
     term of 3 characters or fewer, which must be a whole word)."""
@@ -263,9 +300,9 @@ def title_match(job, F):
 def blocked(job, F):
     dl = (job["title"] + " " + job["description"]).lower()
     co = job["company"].lower()
-    if any(x in co for x in F.get("exclude_companies", [])):
+    if any(x in co for x in F.get("exclude_companies") or []):
         return "excluded-company"
-    hit = next((x for x in F.get("exclude_patterns", []) if x in dl), None)
+    hit = next((x for x in F.get("exclude_patterns") or [] if x in dl), None)
     return f"blocker:{hit.strip()}" if hit else None
 
 
@@ -278,7 +315,7 @@ def sponsorship_flagged(job, F):
     first (a wall always wins). Leave filters.yaml's flag_patterns empty to disable this feature
     entirely. Returns bool."""
     dl = (job["title"] + " " + job["description"]).lower()
-    return any(p in dl for p in F.get("flag_patterns", []))
+    return any(p in dl for p in F.get("flag_patterns") or [])
 
 
 def score(job, F):
@@ -287,7 +324,7 @@ def score(job, F):
     keeps every scoring rule in one user-editable place. With no include_keywords set, every score
     is 0 and ranking falls back to title fit, then freshness (see RANKING)."""
     dl = (job["title"] + " " + job["description"]).lower()
-    return sum(1 for k in F.get("include_keywords", []) if str(k).lower() in dl)
+    return sum(1 for k in F.get("include_keywords") or [] if str(k).lower() in dl)
 
 
 def _norm_title(t):
@@ -396,7 +433,7 @@ def consider(j, F, args, cutoff, stats):
                 posted_approx=bool(j.get("posted_approx")))
 
 
-# ---- outputs: the review feed + the tracker leads ----
+# ---- output: the review feed ----
 def _md_esc(s):
     return (s or "").replace("|", "\\|").replace("\n", " ").strip()
 
@@ -409,7 +446,7 @@ def _src_label(m):
 
 
 def write_feed(matches, hours, keywords_on=True):
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M %Z")  # your own local time
     nflag = sum(1 for m in matches if m.get("no_sponsor_flag"))
     meta = (f"_Generated {now} · last {hours}h · {len(matches)} match(es)"
             + (f" · {nflag} ⚠ no-sponsor" if nflag else "") + " · via `pipeline/job-crawler/crawl.py`._")
@@ -444,90 +481,10 @@ def write_feed(matches, hours, keywords_on=True):
                  f"{_md_esc(m['location']) or 'n/a'} | {(m['posted_at'] or '')[:10]} | {src} | {flag} | "
                  f"[open]({m['url']}) |")
     if not matches:
-        L.append("| n/a | n/a | n/a | _No fresh matches this run: widen with `--hours` or add boards._ "
+        L.append("| n/a | n/a | n/a | _No fresh matches this run. Widen with `--hours` or add boards._ "
                  "| n/a | n/a | n/a | n/a | n/a |")
     FEED.write_text("\n".join(L) + "\n")
     return str(FEED)
-
-
-def _js_row(m):
-    """One APPLICATIONS row in the exact shape of .claude/rules/records-format.md section 1 (when
-    this crawler sits in the full release), so scripts/records_check.py accepts it: `posted` is
-    YYYY-MM-DD or "unknown" (an approximate date goes into notes as "posted (as recorded): ..."),
-    `folder` is "" (no dossier yet), comp is "" and compK null (unknown, never a fake zero), and a
-    `lead` row carries no `applied` field (that is set the turn the row flips to applied)."""
-    def q(s):
-        return (s or "").replace("\\", "").replace('"', "'").replace("\n", " ")
-
-    def qurl(u):
-        return (u or "").replace("\\", "%5C").replace('"', "%22").replace("\n", "")
-    posted_raw = (m["posted_at"] or "")[:10]
-    approx = bool(m.get("posted_approx")) and bool(posted_raw)
-    posted = "" if approx else posted_raw
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    flagged = bool(m.get("no_sponsor_flag"))
-    spon = "no" if flagged else "ask"
-    src_label = "the crawler" if m.get("source", "ats") == "ats" else _src_label(m)
-
-    # A table cell holds a FACT, never a paragraph: `next` is a short, verb-first imperative.
-    # Everything else goes in `notes`, revealed only when a row expands.
-    if flagged:
-        nxt = "Apply anyway if your own work-authorization answer supports it. Check the form."
-    elif m.get("source") == "hn":
-        nxt = "Verify the post on the source, then apply."
-    else:
-        nxt = "Read the full JD, then apply."
-
-    notes = (f"Found by {src_label} on {today}"
-             + (f" (posted {posted})." if posted else ".")
-             + (f" posted (as recorded): about {posted_raw}, from the board's relative date." if approx else "")
-             + " Read the full JD before tailoring, never a summary.")
-    if flagged:
-        notes = ("This posting states it will not sponsor. Whether that rules it out depends on"
-                 " your own work-authorization situation; that's yours to judge, and worth"
-                 " answering deliberately on the form rather than by assumption. " + notes)
-    if m.get("source") == "hn":
-        notes = ("Freeform HN post, so the company, role, and location are unverified. Check them on"
-                 " the source before applying. " + notes)
-
-    url = qurl(m["url"])
-    posted_js = f'"{posted}"' if posted else '"unknown"'
-    # Full per-job record: fresh crawler rows carry the same schema as every other row. source is
-    # always "crawl-jobs" here; jd/apply = the real posting URL; folder/refs/everify start empty
-    # (no dossier, no referral, work-auth-enrollment unverified, never guessed). Missing values
-    # render as the no-data glyph in the tracker, never a fake value.
-    return (f'  {{co:"{q(m["company"])}", role:"{q(m["title"])}", loc:"{q(m["location"])}", '
-            f'comp:"", compK:null, status:"lead", fit:"watch", spon:"{spon}", posted:{posted_js},\n'
-            f'   source:"crawl-jobs", jd:"{url}", apply:"{url}", folder:"", refs:0, everify:"unknown",\n'
-            f'   next:"{q(nxt)}", notes:"{q(notes)}", link:"{url}"}},')
-
-
-def patch_tracker(matches):
-    """Append new, deduped `lead` rows to tracker.html's APPLICATIONS array. Safe: validates
-    the array structure survived before writing; aborts (writes nothing) if anything is off."""
-    if not TRACKER.exists():
-        return {"error": "tracker.html not found", "added": 0}
-    src = TRACKER.read_text()
-    marker = "const APPLICATIONS = ["
-    i = src.find(marker)
-    if i < 0:
-        return {"error": "APPLICATIONS array marker not found; nothing was patched", "added": 0}
-    existing = set(re.findall(r'link:"([^"]+)"', src))
-    new = [m for m in matches if m["url"] and m["url"] not in existing]
-    if not new:
-        return {"added": 0}
-    rows = "\n".join(_js_row(m) for m in new)
-    at = i + len(marker)
-    patched = src[:at] + "\n" + rows + src[at:]
-    patched = re.sub(r'const UPDATED = "[^"]*";',
-                     f'const UPDATED = "{datetime.now(timezone.utc).strftime("%Y-%m-%d")}";',
-                     patched, count=1)
-    # safety: exactly one array, closer present, and row count grew by exactly len(new)
-    if (patched.count(marker) == 1 and "];" in patched
-            and patched.count('co:"') == src.count('co:"') + len(new)):
-        TRACKER.write_text(patched)
-        return {"added": len(new), "companies": sorted({m["company"] for m in new})}
-    return {"error": "post-patch validation failed; tracker not written", "added": 0}
 
 
 def main():
@@ -541,8 +498,7 @@ def main():
                     "filters.yaml lookback_hours, 72)")
     ap.add_argument("--company", default=None, help="only companies whose name contains this")
     ap.add_argument("--all", action="store_true", help="ignore the lookback window")
-    ap.add_argument("--write", action="store_true",
-                    help="write job-feed.md" + (" + patch tracker.html" if TRACKER.exists() else ""))
+    ap.add_argument("--write", action="store_true", help="write job-feed.md")
     ap.add_argument("--no-hn", action="store_true",
                     help="skip the HN 'Who's Hiring' source")
     ap.add_argument("--no-api", action="store_true",
@@ -551,10 +507,7 @@ def main():
                     help="exclude postings flagged 'no sponsorship' (default: include + flag them)")
     args = ap.parse_args()
 
-    F = load_yaml("filters.yaml") or {}
-    # Titles are matched as lowercase substrings of a lowercased job title.
-    F["include_titles"] = [str(t).strip().lower() for t in (F.get("include_titles") or [])
-                           if str(t).strip()]
+    F = normalize_filters(load_yaml("filters.yaml"))
     if not F["include_titles"]:
         print(NO_TITLES, file=sys.stderr)
         sys.exit(2)
@@ -659,8 +612,11 @@ def main():
     ro_hint = remote_only_hint(F, report, stats["dropped"])
     if ro_hint:
         hints.append(ro_hint)
+    few = few_matches_hint(len(matches), F)
+    if few:
+        hints.append(few)
 
-    out = dict(generated=datetime.now(timezone.utc).isoformat(), lookback_hours=hours,
+    out = dict(generated=datetime.now().astimezone().isoformat(), lookback_hours=hours,
                boards=stats["boards"], raw_jobs=stats["raw_jobs"], title_hits=stats["title_hits"],
                count=len(matches),
                dropped=stats["dropped"], dropped_reasons=DROP_REASONS,
@@ -675,8 +631,6 @@ def main():
                hints=hints, hn=hn_meta, matches=matches, errors=errors)
     if args.write:
         out["feed_written"] = write_feed(matches, hours, keywords_on=bool(F.get("include_keywords")))
-        if TRACKER.exists():  # no tracker file -> feed only, no tracker key, no error
-            out["tracker"] = patch_tracker(matches)
     for h in hints:
         print(h, file=sys.stderr)
     print(json.dumps(out, indent=2))

@@ -17,9 +17,11 @@ read from your environment, never from a file.
 **ATS coverage, plainly.** `discover.py --sweep` and `--company` find boards on Greenhouse, Lever,
 Ashby, SmartRecruiters and Workable. Workday boards are read too, but only after you give
 `discover.py --urls` a Workday careers URL. iCIMS, Taleo, Oracle and SuccessFactors are not read
-directly. For an employer on one of those, find its postings with a web search
-(`discover.py --queries` prints the queries); any result URL on a supported ATS can go into
-`discover.py --urls -`, and the rest you open and apply to yourself.
+directly, and many employers (hospitals, schools, government, retailers) use systems like those.
+For them, search the web: `discover.py --queries` prints the queries, including plain ones such as
+"registered nurse jobs columbus" built from your `home_metros`. Any result URL on a supported ATS
+can go into `discover.py --urls -`; the rest you open and apply to directly. When a crawl finds 3 matches or fewer,
+its `hints` say this too.
 
 Also included: **`liveness.py`**, a clean-room ghost-job re-checker. Re-verify a lead is still live
 before spending time tailoring or applying to it: `python3 liveness.py --url <URL>`. Greenhouse,
@@ -37,7 +39,7 @@ fields*. They never invent, embellish, or rank by anything but the real signal. 
 ## Setup
 
 ```
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
 Then set your role titles in **`filters.yaml` `include_titles`** (any role: "data analyst",
@@ -100,7 +102,7 @@ The `source:` field tells them apart from rows you wrote; discovery never edits 
 | Company ATS boards (`boards.yaml`) | yes | any company on Greenhouse, Lever, Ashby, SmartRecruiters, Workable, Workday | one read per board per run |
 | Himalayas | yes | remote jobs, title search, `country: US` | one fetch an hour |
 | Jobicy | yes | remote jobs, `geo: usa`, keyword tag | one pass an hour (its terms) |
-| Remotive | yes | remote jobs | one call per run, at most every 6 hours (its terms) |
+| Remotive | yes | remote jobs (a short list, about 10 recent jobs, unless you set one title) | one call per run, at most every 6 hours (its terms) |
 | Remote OK | yes | remote jobs, one recent feed | one fetch an hour |
 | USAJOBS | when `USAJOBS_API_KEY` and `USAJOBS_EMAIL` are set | US federal jobs, any occupation | one fetch an hour |
 | The Muse | no: its docs ask you to register beyond testing | US onsite and remote | one fetch an hour |

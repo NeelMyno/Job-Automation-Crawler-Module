@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Offline tests for crawl.py's ranking, its tracker rows, the shared location rule (locations.py),
+Offline tests for crawl.py's ranking, the shared location rule (locations.py),
 HN title parsing, the short-title rule (titles.py), the drop counts, and discover.py's
 time-budget help: NO network. Every input is synthetic.
 
@@ -68,6 +68,79 @@ class TestLocations(NoNetwork):
         self.assertIn("home_metros", err)
 
 
+class TestShippedRegionLists(NoNetwork):
+    """The region gate with the filters.yaml that ships: whole words, every state, US wins."""
+    def setUp(self):
+        super().setUp()
+        import yaml
+        self.F = yaml.safe_load((Path(C.__file__).parent / "filters.yaml").read_text())
+
+    def ok(self, where):
+        return L.region_ok({"location": where}, self.F)
+
+    def test_foreign_places_dropped(self):
+        for where in ("Toronto, Canada", "Makati, Manila, Philippines", "Lagos, Nigeria",
+                      "Remote (Europe)", "Remote - EMEA", "London, United Kingdom", "Mexico City, Mexico"):
+            self.assertFalse(self.ok(where), where)
+
+    def test_us_towns_with_foreign_names_kept(self):
+        for where in ("Dublin, OH", "London, OH", "Berlin, NH", "Lisbon, OH", "Toronto, OH",
+                      "Columbus, OH", "Paris, TX", "Albuquerque, New Mexico", "Indianapolis, IN",
+                      "Remote (United States)", "Remote, US"):
+            self.assertTrue(self.ok(where), where)
+
+
+class TestFilterLists(NoNetwork):
+    """exclude_patterns, flag_patterns and exclude_companies match whatever case you typed, and a
+    null list is read as empty instead of crashing."""
+    def test_mixed_case_entries_match(self):
+        walled = job("Security Engineer", "Remote (United States)", company="Initech")
+        walled["description"] = "Must be a US Citizen."
+        flagged = job("Security Engineer", "Remote (United States)", company="Hooli")
+        flagged["description"] = "We are Unable To Sponsor visas."
+        api = [walled, flagged, job("Security Engineer", "Remote (United States)", company="Acme Corp"),
+               job("Security Engineer", "Remote (United States)", company="Globex")]
+        F = dict(BASE, exclude_patterns=["US Citizen"], flag_patterns=["Unable to Sponsor"],
+                 exclude_companies=["ACME"])
+        code, out, _ = run_crawl([], F, {"boards": []}, api=api)
+        d = json.loads(out)
+        self.assertEqual(code, 0)
+        self.assertEqual(sorted(m["company"] for m in d["matches"]), ["Globex", "Hooli"])
+        self.assertEqual(d["dropped"]["wall"], 2)
+        self.assertEqual([m["company"] for m in d["matches"] if m["no_sponsor_flag"]], ["Hooli"])
+
+    def test_null_lists_do_not_crash(self):
+        F = dict(BASE, exclude_patterns=None, flag_patterns=None, exclude_companies=None,
+                 include_keywords=None)
+        code, out, _ = run_crawl([], F, {"boards": []},
+                                 api=[job("Security Engineer", "Remote (United States)")])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["count"], 1)
+
+    def test_blank_entry_is_dropped(self):
+        self.assertEqual(C.normalize_filters({"exclude_patterns": ["", "  ", "X"]})["exclude_patterns"], ["x"])
+
+
+class TestFewMatchesHint(NoNetwork):
+    def test_zero_matches_points_beyond_the_feeds(self):
+        F = dict(BASE, include_titles=["registered nurse"], remote_ok=False, onsite_ok="home_metros",
+                 home_metros=["columbus"])
+        code, out, _ = run_crawl([], F, {"boards": []}, api=[job("Data Analyst")])
+        d = json.loads(out)
+        self.assertEqual(d["count"], 0)
+        hint = [h for h in d["hints"] if "can't read" in h]
+        self.assertEqual(len(hint), 1, d["hints"])
+        self.assertIn('"registered nurse jobs columbus"', hint[0])
+        self.assertIn("hospitals", hint[0])
+        self.assertIn("discover.py --queries", hint[0])
+
+    def test_no_hint_when_plenty(self):
+        api = [job("Security Engineer", "Remote (United States)", company=c)
+               for c in ("Acme", "Globex", "Initech", "Hooli", "Umbrella")]
+        d = json.loads(run_crawl([], dict(BASE), {"boards": []}, api=api)[1])
+        self.assertFalse([h for h in d["hints"] if "can't read" in h])
+
+
 class TestRanking(NoNetwork):
     def test_title_fit_levels(self):
         F = {"include_titles": ["security engineer"]}
@@ -94,77 +167,6 @@ class TestRanking(NoNetwork):
         d = json.loads(out)
         self.assertEqual(d["matches"][0]["title"], "Senior Security Engineer")
         self.assertNotIn("include_keywords is empty", d["ranking"])
-
-
-# The APPLICATIONS row shape (records-format section 1, as the full release's records_check.py
-# enforces it): required keys present, posted YYYY-MM-DD or unknown, folder a string ("" or
-# applications/<slug>), lowercase keys, `notes` never `note`, no `applied` on a lead row.
-REQUIRED = ("co", "role", "status", "posted", "source", "jd", "apply", "folder", "refs", "everify", "next")
-VAL = r'("(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?|null|true|false)'
-
-
-def parse_row(text):
-    body = text.strip().rstrip(",").strip()
-    assert body.startswith("{") and body.endswith("}"), text
-    pairs = re.findall(r"(\w+):" + VAL, body)
-    out = {}
-    for k, v in pairs:
-        out[k] = None if v == "null" else json.loads(v) if v.startswith('"') else v
-    return out
-
-
-class TestTrackerRow(NoNetwork):
-    def _row(self, **kw):
-        m = dict(company="Globex", title="Security Engineer", location="Denver, CO",
-                 url="https://example.test/1", posted_at="2099-01-05T00:00:00+00:00", remote=None,
-                 score=0, title_fit=3, matched="security engineer", source="ats", no_sponsor_flag=False)
-        m.update(kw)
-        return parse_row(C._js_row(m))
-
-    def assert_shape(self, r):
-        for k in REQUIRED:
-            self.assertIn(k, r)
-        self.assertRegex(r["posted"], r"^(?:\d{4}-\d{2}-\d{2}|unknown)$")
-        self.assertIsInstance(r["folder"], str)
-        self.assertTrue(r["folder"] == "" or r["folder"].startswith("applications/"))
-        self.assertEqual(r["status"], "lead")
-        self.assertNotIn("note", r)
-        self.assertNotIn("applied", r)
-        self.assertFalse([k for k in r if k[:1].isupper()])
-
-    def test_dated_row(self):
-        r = self._row()
-        self.assert_shape(r)
-        self.assertEqual(r["posted"], "2099-01-05")
-
-    def test_undated_row_says_unknown(self):
-        r = self._row(posted_at=None, source="hn")
-        self.assert_shape(r)
-        self.assertEqual(r["posted"], "unknown")
-
-    def test_approximate_date_goes_to_notes(self):
-        r = self._row(posted_approx=True)
-        self.assert_shape(r)
-        self.assertEqual(r["posted"], "unknown")
-        self.assertIn("posted (as recorded): about 2099-01-05", r["notes"])
-
-    def test_quotes_never_break_the_row(self):
-        r = self._row(company='Acme "Labs"', title="Engineer\nII", url='https://example.test/a"b')
-        self.assert_shape(r)
-        self.assertEqual(r["jd"], "https://example.test/a%22b")
-
-    def test_patch_tracker_writes_valid_rows(self):
-        tmp = Path(tempfile.mkdtemp()) / "tracker.html"
-        tmp.write_text('<script>\nconst UPDATED = "2099-01-01";\nconst APPLICATIONS = [\n];\n</script>\n')
-        m = dict(company="Globex", title="Security Engineer", location="", url="https://example.test/2",
-                 posted_at=None, remote=None, score=0, title_fit=3, matched="x", source="ats",
-                 no_sponsor_flag=False)
-        with mock.patch.object(C, "TRACKER", tmp):
-            self.assertEqual(C.patch_tracker([m])["added"], 1)
-            self.assertEqual(C.patch_tracker([m])["added"], 0)  # deduped on the URL
-        rows = re.findall(r"\{co:.*?\},", tmp.read_text(), re.S)
-        self.assertEqual(len(rows), 1)
-        self.assert_shape(parse_row(rows[0]))
 
 
 class TestHnTitles(NoNetwork):

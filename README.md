@@ -22,10 +22,12 @@ environment, never from a file.
 
 ## Quick start
 
-See `SETUP.md` for the full walkthrough. The short version:
+See `SETUP.md` for the full walkthrough, starting with "Before you start" (getting the repo,
+opening a terminal in its folder, installing Python 3). The short version, run from the repo's
+folder (on Windows, type `py` for `python3`):
 
 ```
-pip install -r pipeline/job-crawler/requirements.txt
+python3 -m pip install -r pipeline/job-crawler/requirements.txt
 # edit pipeline/job-crawler/filters.yaml  -> include_titles: your role titles (any field)
 python3 pipeline/job-crawler/crawl.py --hours 720         # job APIs + HN work right away
 python3 pipeline/job-crawler/discover.py --sweep          # then add company boards hiring for your titles

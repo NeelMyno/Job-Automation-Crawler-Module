@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Offline unit tests for liveness.py. NO network calls: every input is a synthetic string fed
-straight to the pure classifier / resolver / writer helpers. The network-touching layers
+Offline unit tests for liveness.py: NO network calls. Every input is a synthetic string fed
+straight to the pure classifier / resolver helpers. The network-touching layers
 (check_ats, http_probe, _fetch_ats_ids) are intentionally NOT exercised here; they are verified
 separately against the live boards.
 
@@ -10,44 +10,16 @@ Run:  python3 test_liveness.py           (or: python3 -m unittest test_liveness 
 import unittest
 import liveness as L
 
-# A realistic single-line tracker row (single-quotes only inside values, like the real file).
-SAMPLE_ROW = (
-    '  {co:"Northwind", role:"Staff Brand Designer", loc:"SF, CA, US", comp:"\u2014", compK:null, '
-    'status:"lead", fit:"watch", spon:"ask", posted:"2026-06-29", source:"crawl-jobs", '
-    'jd:"https://job-boards.greenhouse.io/northwind/jobs/5995303004", '
-    'apply:"https://job-boards.greenhouse.io/northwind/jobs/5995303004", folder:null, refs:0, '
-    'everify:"unknown", next:"Read the full JD, tailor, apply.", '
-    'link:"https://job-boards.greenhouse.io/northwind/jobs/5995303004", '
-    'notes:"Found by the crawler. Fresh ATS pull."},')
-
 LIVE_JD_BODY = (
-    "<html><body><h1>Senior Product Designer</h1>"
-    "<h2>About the role</h2><p>You will own end-to-end design for our core product surface, "
-    "partnering closely with engineering and product to ship polished experiences.</p>"
-    "<h2>Responsibilities</h2><ul><li>Lead design for major initiatives</li>"
-    "<li>Build and maintain the design system</li></ul>"
-    "<h2>Qualifications</h2><ul><li>5+ years of product design experience</li>"
-    "<li>Strong portfolio of shipped work</li></ul>"
-    "<h2>Benefits</h2><p>Health, dental, equity.</p>"
+    "<html><body><h1>Registered Nurse, Medical-Surgical</h1>"
+    "<h2>About the role</h2><p>You will provide direct patient care on a busy 32-bed unit, "
+    "working closely with physicians, therapists and pharmacists to plan and deliver safe care.</p>"
+    "<h2>Responsibilities</h2><ul><li>Assess, monitor and document patient condition</li>"
+    "<li>Coordinate care plans and patient education</li></ul>"
+    "<h2>Qualifications</h2><ul><li>2+ years of acute care nursing experience</li>"
+    "<li>Active RN license in the state of practice</li></ul>"
+    "<h2>Benefits</h2><p>Health, dental, tuition support.</p>"
     "<a href='/apply'>Apply for this job</a></body></html>")
-
-MINI_TRACKER = (
-    "<script>\n"
-    'const UPDATED = "2026-07-14";\n'
-    "\n"
-    "const APPLICATIONS = [\n"
-    '  {co:"Alpha", role:"Designer", loc:"SF", status:"lead", jd:"https://jobs.ashbyhq.com/alpha/1", '
-    'apply:"https://jobs.ashbyhq.com/alpha/1", link:"https://jobs.ashbyhq.com/alpha/1", notes:"x"},\n'
-    '  {co:"Beta", role:"PD", loc:"NY", status:"applied", jd:null, apply:null, '
-    'link:"https://x.com/b", notes:"y"},\n'
-    '  {co:"Delta", role:"Brand", loc:"\u2014", status:"lead", jd:null, apply:null, notes:"z"}\n'
-    "];\n"
-    "\n"
-    "const NETWORK = [\n"
-    '  {name:"Zed", status:"lead", notes:"n"}\n'
-    "];\n"
-    "</script>\n")
-
 
 class TestClassify(unittest.TestCase):
     def c(self, status, body, *, final=None, original="https://acme.com/jobs/12345"):
@@ -83,7 +55,7 @@ class TestClassify(unittest.TestCase):
     def test_redirect_to_careers_index_is_dead(self):
         v, r = L.classify(200, "https://acme.com/careers",
                           "<html><body>Explore roles at Acme</body></html>",
-                          original_url="https://acme.com/careers/senior-designer-req")
+                          original_url="https://acme.com/careers/senior-accountant-req")
         self.assertEqual(v, "dead")
         self.assertIn("careers index", r)
 
@@ -180,7 +152,7 @@ class TestResolution(unittest.TestCase):
         self.assertFalse(L._has_job_id("https://x.com/careers"))
         self.assertTrue(L._looks_like_index("https://x.com/careers"))
         self.assertTrue(L._looks_like_index("https://x.com/"))
-        self.assertFalse(L._looks_like_index("https://x.com/careers/senior-designer-req"))
+        self.assertFalse(L._looks_like_index("https://x.com/careers/senior-accountant-req"))
 
     def test_check_url_linkedin_is_uncertain_no_network(self):
         v, r = L.check_url("https://www.linkedin.com/jobs/view/4426522138/")
@@ -190,64 +162,6 @@ class TestResolution(unittest.TestCase):
     def test_check_url_empty_is_uncertain(self):
         v, _ = L.check_url(None)
         self.assertEqual(v, "uncertain")
-
-
-class TestTrackerWriter(unittest.TestCase):
-    def test_set_liveness_basic_and_idempotent(self):
-        out = L.set_liveness_on_line(SAMPLE_ROW, "dead", "2026-07-14")
-        self.assertIsNotNone(out)
-        self.assertEqual(out.count('liveness:"'), 1)
-        self.assertEqual(out.count('checked:"'), 1)
-        self.assertIn('liveness:"dead"', out)
-        self.assertIn('checked:"2026-07-14"', out)
-        self.assertTrue(out.rstrip().endswith("},"))
-        self.assertEqual(L._field(out, "co"), "Northwind")           # untouched
-        self.assertEqual(L._field(out, "status"), "lead")          # untouched
-        # re-stamp: still exactly one field each, value updated (no duplication)
-        again = L.set_liveness_on_line(out, "live", "2026-07-15")
-        self.assertEqual(again.count('liveness:"'), 1)
-        self.assertIn('liveness:"live"', again)
-        self.assertIn('checked:"2026-07-15"', again)
-        # same inputs -> identical output (true idempotency)
-        self.assertEqual(L.set_liveness_on_line(out, "dead", "2026-07-14"), out)
-
-    def test_set_liveness_rejects_non_row(self):
-        self.assertIsNone(L.set_liveness_on_line("not a row object", "dead", "2026-07-14"))
-
-    def test_parse_applications(self):
-        rows = L.parse_applications(MINI_TRACKER)
-        self.assertEqual(len(rows), 3)
-        self.assertEqual([r["co"] for r in rows], ["Alpha", "Beta", "Delta"])
-        self.assertEqual(rows[0]["url"], "https://jobs.ashbyhq.com/alpha/1")
-        self.assertEqual(rows[1]["url"], "https://x.com/b")          # apply/jd null -> link
-        self.assertIsNone(rows[2]["url"])                            # no apply/jd/link at all
-
-    def test_rewrite_tracker_is_safe_and_validated(self):
-        rows = L.parse_applications(MINI_TRACKER)
-        updates = {r["idx"]: v for r, v in zip(rows, ["dead", "uncertain", "live"])}
-        new_text, note = L.rewrite_tracker(MINI_TRACKER, updates, "2026-07-14")
-        self.assertTrue(note.startswith("ok"), note)
-        # structure preserved
-        self.assertEqual(new_text.count('co:"'), MINI_TRACKER.count('co:"'))
-        self.assertEqual(new_text.count("const NETWORK = ["), 1)
-        self.assertEqual(len(new_text.split("\n")), len(MINI_TRACKER.split("\n")))
-        # every checked row now annotated exactly once
-        self.assertEqual(new_text.count('liveness:"'), 3)
-        self.assertEqual(new_text.count('checked:"2026-07-14"'), 3)
-        # and it still parses back to the same rows
-        self.assertEqual(len(L.parse_applications(new_text)), 3)
-        # the network row (NETWORK array) was NOT annotated
-        self.assertNotIn('name:"Zed", status:"lead", notes:"n", liveness', new_text)
-
-    def test_rewrite_tracker_idempotent(self):
-        rows = L.parse_applications(MINI_TRACKER)
-        updates = {r["idx"]: "dead" for r in rows}
-        once, _ = L.rewrite_tracker(MINI_TRACKER, updates, "2026-07-14")
-        rows2 = L.parse_applications(once)
-        updates2 = {r["idx"]: "dead" for r in rows2}
-        twice, note = L.rewrite_tracker(once, updates2, "2026-07-14")
-        self.assertEqual(once, twice)                               # no drift on re-run
-        self.assertTrue(note.startswith("already current"), note)
 
 
 if __name__ == "__main__":
